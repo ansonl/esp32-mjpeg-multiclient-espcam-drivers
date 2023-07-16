@@ -58,7 +58,10 @@
 
   Should work then
 */
-#include "home_wifi_multi.h"
+//#include "home_wifi_multi.h"
+#define SSID1 "XXX"
+#define PWD1 "XXX"
+#define DEVICEHOSTNAME "esp-eye-cam"
 
 //OV2640 cam;
 
@@ -102,10 +105,13 @@ void mjpegCB(void* pvParameters) {
     &tCam,        // RTOS task handle
     PRO_CPU);     // core
 
+  server.enableCrossOrigin(true);
+
   //  Registering webserver handling routines
   server.on("/mjpeg/1", HTTP_GET, handleJPGSstream);
   server.on("/jpg", HTTP_GET, handleJPG);
   server.onNotFound(handleNotFound);
+  
 
   //  Starting webserver
   server.begin();
@@ -224,7 +230,9 @@ char* allocateMemory(char* aPtr, size_t aSize) {
 
 // ==== STREAMING ======================================================
 const char HEADER[] = "HTTP/1.1 200 OK\r\n" \
+                      "Access-Control-Allow-Private-Network: true\r\n" \
                       "Access-Control-Allow-Origin: *\r\n" \
+                      "Access-Control-Allow-Credentials: true\r\n" \
                       "Content-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n";
 const char BOUNDARY[] = "\r\n--123456789000000000000987654321\r\n";
 const char CTNTTYPE[] = "Content-Type: image/jpeg\r\nContent-Length: ";
@@ -232,7 +240,7 @@ const int hdrLen = strlen(HEADER);
 const int bdrLen = strlen(BOUNDARY);
 const int cntLen = strlen(CTNTTYPE);
 
-
+//
 struct streamInfo {
   uint32_t        frame;
   WiFiClient      client;
@@ -248,6 +256,8 @@ void handleJPGSstream(void)
   Serial.printf("handleJPGSstream start: free heap  : %d\n", ESP.getFreeHeap());
 
   streamInfo* info = new streamInfo;
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
 
   info->frame = frameNumber - 1;
   info->client = server.client();
@@ -349,6 +359,9 @@ void streamCB(void * pvParameters) {
 
 
 const char JHEADER[] = "HTTP/1.1 200 OK\r\n" \
+                       "Access-Control-Allow-Private-Network: true\r\n" \
+                       "Access-Control-Allow-Origin: *\r\n" \
+                       "Access-Control-Allow-Credentials: true\r\n" \
                        "Content-disposition: inline; filename=capture.jpg\r\n" \
                        "Content-type: image/jpeg\r\n\r\n";
 const int jhdLen = strlen(JHEADER);
@@ -357,8 +370,8 @@ const int jhdLen = strlen(JHEADER);
 void handleJPG(void)
 {
   WiFiClient client = server.client();
-
   if (!client.connected()) return;
+  
   camera_fb_t* fb = esp_camera_fb_get();
   client.write(JHEADER, jhdLen);
   client.write((char*)fb->buf, fb->len);
@@ -426,8 +439,8 @@ void setup()
     .pin_pwdn       = PWDN_GPIO_NUM,
     .pin_reset      = RESET_GPIO_NUM,
     .pin_xclk       = XCLK_GPIO_NUM,
-    .pin_sscb_sda   = SIOD_GPIO_NUM,
-    .pin_sscb_scl   = SIOC_GPIO_NUM,
+    .pin_sccb_sda   = SIOD_GPIO_NUM,
+    .pin_sccb_scl   = SIOC_GPIO_NUM,
     .pin_d7         = Y9_GPIO_NUM,
     .pin_d6         = Y8_GPIO_NUM,
     .pin_d5         = Y7_GPIO_NUM,
@@ -463,11 +476,14 @@ void setup()
     //    .frame_size     = FRAMESIZE_QVGA,
     //    .frame_size     = FRAMESIZE_UXGA,
     //    .frame_size     = FRAMESIZE_SVGA,
-    .frame_size     = FRAMESIZE_XGA,
+    .frame_size     = FRAMESIZE_UXGA,
     //    .frame_size     = FRAMESIZE_VGA,
     //    .frame_size     = FRAMESIZE_UXGA,
-    .jpeg_quality   = 16,
-    .fb_count       = 2
+    .jpeg_quality   = 12,
+    .fb_count       = 2,
+    .fb_location    = CAMERA_FB_IN_PSRAM,
+    .grab_mode      = CAMERA_GRAB_LATEST,
+    .sccb_i2c_port = 0,
   };
 
 #if defined(CAMERA_MODEL_ESP_EYE)
@@ -488,6 +504,7 @@ void setup()
   IPAddress ip;
 
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(DEVICEHOSTNAME);
   WiFi.begin(SSID1, PWD1);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED)
