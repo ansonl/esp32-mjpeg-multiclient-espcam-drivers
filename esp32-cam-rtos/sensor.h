@@ -11,23 +11,26 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Chip ID Registers
-#define REG_PID        0x0A
-#define REG_VER        0x0B
-#define REG_MIDH       0x1C
-#define REG_MIDL       0x1D
-
-#define REG16_CHIDH     0x300A
-#define REG16_CHIDL     0x300B
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef enum {
     OV9650_PID = 0x96,
     OV7725_PID = 0x77,
     OV2640_PID = 0x26,
-    OV3660_PID = 0x36,
-    OV5640_PID = 0x56,
+    OV3660_PID = 0x3660,
+    OV5640_PID = 0x5640,
     OV7670_PID = 0x76,
-    NT99141_PID = 0x14
+    NT99141_PID = 0x1410,
+    GC2145_PID = 0x2145,
+    GC032A_PID = 0x232a,
+    GC0308_PID = 0x9b,
+    BF3005_PID = 0x30,
+    BF20A6_PID = 0x20a6,
+    SC101IOT_PID = 0xda4a,
+    SC030IOT_PID = 0x9a46,
+    SC031GS_PID = 0x0031,
 } camera_pid_t;
 
 typedef enum {
@@ -37,23 +40,39 @@ typedef enum {
     CAMERA_OV5640,
     CAMERA_OV7670,
     CAMERA_NT99141,
+    CAMERA_GC2145,
+    CAMERA_GC032A,
+    CAMERA_GC0308,
+    CAMERA_BF3005,
+    CAMERA_BF20A6,
+    CAMERA_SC101IOT,
+    CAMERA_SC030IOT,
+    CAMERA_SC031GS,
     CAMERA_MODEL_MAX,
     CAMERA_NONE,
-    CAMERA_UNKNOWN
 } camera_model_t;
 
 typedef enum {
-    OV2640_SCCB_ADDR   = 0x30,
-    OV5640_SCCB_ADDR   = 0x3C,
-    OV3660_SCCB_ADDR   = 0x3C,
-    OV7725_SCCB_ADDR   = 0x21,
-    OV7670_SCCB_ADDR   = 0x21,
-    NT99141_SCCB_ADDR  = 0x2A,
+    OV2640_SCCB_ADDR   = 0x30,// 0x60 >> 1
+    OV5640_SCCB_ADDR   = 0x3C,// 0x78 >> 1
+    OV3660_SCCB_ADDR   = 0x3C,// 0x78 >> 1
+    OV7725_SCCB_ADDR   = 0x21,// 0x42 >> 1
+    OV7670_SCCB_ADDR   = 0x21,// 0x42 >> 1
+    NT99141_SCCB_ADDR  = 0x2A,// 0x54 >> 1
+    GC2145_SCCB_ADDR   = 0x3C,// 0x78 >> 1
+    GC032A_SCCB_ADDR   = 0x21,// 0x42 >> 1
+    GC0308_SCCB_ADDR   = 0x21,// 0x42 >> 1
+    BF3005_SCCB_ADDR   = 0x6E,
+    BF20A6_SCCB_ADDR   = 0x6E,
+    SC101IOT_SCCB_ADDR = 0x68,// 0xd0 >> 1
+    SC030IOT_SCCB_ADDR = 0x68,// 0xd0 >> 1
+    SC031GS_SCCB_ADDR  = 0x30,
 } camera_sccb_addr_t;
 
 typedef enum {
     PIXFORMAT_RGB565,    // 2BPP/RGB565
     PIXFORMAT_YUV422,    // 2BPP/YUV422
+    PIXFORMAT_YUV420,    // 1.5BPP/YUV420
     PIXFORMAT_GRAYSCALE, // 1BPP/GRAYSCALE
     PIXFORMAT_JPEG,      // JPEG/COMPRESSED
     PIXFORMAT_RGB888,    // 3BPP/RGB888
@@ -92,9 +111,11 @@ typedef enum {
 
 typedef struct {
     const camera_model_t model;
+    const char *name;
     const camera_sccb_addr_t sccb_addr;
     const camera_pid_t pid;
     const framesize_t max_size;
+    const bool support_jpeg;
 } camera_sensor_info_t;
 
 typedef enum {
@@ -146,7 +167,7 @@ extern const camera_sensor_info_t camera_sensor[];
 typedef struct {
     uint8_t MIDH;
     uint8_t MIDL;
-    uint8_t PID;
+    uint16_t PID;
     uint8_t VER;
 } sensor_id_t;
 
@@ -191,7 +212,7 @@ typedef struct _sensor {
 
     // Sensor function pointers
     int  (*init_status)         (sensor_t *sensor);
-    int  (*reset)               (sensor_t *sensor);
+    int  (*reset)               (sensor_t *sensor); // Reset the configuration of the sensor, and return ESP_OK if reset is successful
     int  (*set_pixformat)       (sensor_t *sensor, pixformat_t pixformat);
     int  (*set_framesize)       (sensor_t *sensor, framesize_t framesize);
     int  (*set_contrast)        (sensor_t *sensor, int level);
@@ -230,5 +251,11 @@ typedef struct _sensor {
     int  (*set_pll)             (sensor_t *sensor, int bypass, int mul, int sys, int root, int pre, int seld5, int pclken, int pclk);
     int  (*set_xclk)            (sensor_t *sensor, int timer, int xclk);
 } sensor_t;
+
+camera_sensor_info_t *esp_camera_sensor_get_info(sensor_id_t *id);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __SENSOR_H__ */

@@ -16,10 +16,9 @@
 #include <string.h>
 #include "soc/i2s_struct.h"
 #include "esp_idf_version.h"
-#if ESP_IDF_VERSION_MAJOR >= 4
+#if (ESP_IDF_VERSION_MAJOR >= 4) && (ESP_IDF_VERSION_MINOR > 1)
 #include "hal/gpio_ll.h"
 #else
-#include "rom/ets_sys.h"
 #include "soc/gpio_periph.h"
 #define esp_rom_delay_us ets_delay_us
 static inline int gpio_ll_get_level(gpio_dev_t *hw, int gpio_num)
@@ -34,6 +33,16 @@ static inline int gpio_ll_get_level(gpio_dev_t *hw, int gpio_num)
 #include "ll_cam.h"
 #include "xclk.h"
 #include "cam_hal.h"
+
+#if (ESP_IDF_VERSION_MAJOR >= 4) && (ESP_IDF_VERSION_MINOR >= 3)
+#include "esp_rom_gpio.h"
+#endif
+
+#if (ESP_IDF_VERSION_MAJOR >= 5)
+#define GPIO_PIN_INTR_POSEDGE GPIO_INTR_POSEDGE
+#define GPIO_PIN_INTR_NEGEDGE GPIO_INTR_NEGEDGE
+#define gpio_matrix_in(a,b,c) esp_rom_gpio_connect_in_signal(a,b,c)
+#endif
 
 static const char *TAG = "esp32 ll_cam";
 
@@ -196,7 +205,7 @@ static void IRAM_ATTR ll_cam_vsync_isr(void *arg)
     cam_obj_t *cam = (cam_obj_t *)arg;
     BaseType_t HPTaskAwoken = pdFALSE;
     // filter
-    esp_rom_delay_us(1);
+    ets_delay_us(1);
     if (gpio_ll_get_level(&GPIO, cam->vsync_pin) == !cam->vsync_invert) {
         ll_cam_send_event(cam, CAM_VSYNC_EVENT, &HPTaskAwoken);
         if (HPTaskAwoken == pdTRUE) {
@@ -228,12 +237,24 @@ static void IRAM_ATTR ll_cam_dma_isr(void *arg)
     //DBG_PIN_SET(0);
 }
 
-bool ll_cam_stop(cam_obj_t *cam)
+bool IRAM_ATTR ll_cam_stop(cam_obj_t *cam)
 {
     I2S0.conf.rx_start = 0;
     I2S_ISR_DISABLE(in_suc_eof);
     I2S0.in_link.stop = 1;
     return true;
+}
+
+esp_err_t ll_cam_deinit(cam_obj_t *cam)
+{
+    gpio_isr_handler_remove(cam->vsync_pin);
+
+    if (cam->cam_intr_handle) {
+        esp_intr_free(cam->cam_intr_handle);
+        cam->cam_intr_handle = NULL;
+    }
+    gpio_uninstall_isr_service();
+    return ESP_OK;
 }
 
 bool ll_cam_start(cam_obj_t *cam, int frame_pos)
@@ -291,7 +312,7 @@ esp_err_t ll_cam_config(cam_obj_t *cam, const camera_config_t *config)
     I2S0.clkm_conf.clkm_div_a = 0;
     I2S0.clkm_conf.clkm_div_b = 0;
     I2S0.clkm_conf.clkm_div_num = 2;
-    
+
     I2S0.fifo_conf.dscr_en = 1;
     I2S0.fifo_conf.rx_fifo_mod = sampling_mode;
     I2S0.fifo_conf.rx_fifo_mod_force_en = 1;
@@ -370,13 +391,13 @@ uint8_t ll_cam_get_dma_align(cam_obj_t *cam)
 }
 
 static bool ll_cam_calc_rgb_dma(cam_obj_t *cam){
-    size_t dma_half_buffer_max = 16 * 1024 / cam->dma_bytes_per_item;
+    size_t dma_half_buffer_max = 32768 / 2 / cam->dma_bytes_per_item;
     size_t dma_buffer_max = 2 * dma_half_buffer_max;
     size_t node_max = LCD_CAM_DMA_NODE_BUFFER_MAX_SIZE / cam->dma_bytes_per_item;
 
     size_t line_width = cam->width * cam->in_bytes_per_pixel;
     size_t image_size = cam->height * line_width;
-    if (image_size > (2 * 1024 * 1024) || (line_width > dma_half_buffer_max)) {
+    if (image_size > (4 * 1024 * 1024) || (line_width > dma_half_buffer_max)) {
         ESP_LOGE(TAG, "Resolution too high");
         return 0;
     }
@@ -425,9 +446,12 @@ static bool ll_cam_calc_rgb_dma(cam_obj_t *cam){
     }
     // Calculate DMA size
     dma_buffer_size =(dma_buffer_max / dma_half_buffer) * dma_half_buffer;
-    
-    ESP_LOGI(TAG, "node_size: %4u, nodes_per_line: %u, lines_per_node: %u, dma_half_buffer_min: %5u, dma_half_buffer: %5u, lines_per_half_buffer: %2u, dma_buffer_size: %5u, image_size: %u", 
-            node_size * cam->dma_bytes_per_item, nodes_per_line, lines_per_node, dma_half_buffer_min * cam->dma_bytes_per_item, dma_half_buffer * cam->dma_bytes_per_item, lines_per_half_buffer, dma_buffer_size * cam->dma_bytes_per_item, image_size);
+
+    ESP_LOGI(TAG, "node_size: %4u, nodes_per_line: %u, lines_per_node: %u, dma_half_buffer_min: %5u, dma_half_buffer: %5u,"
+            "lines_per_half_buffer: %2u, dma_buffer_size: %5u, image_size: %u",
+            (unsigned) (node_size * cam->dma_bytes_per_item), (unsigned) nodes_per_line, (unsigned) lines_per_node,
+            (unsigned) (dma_half_buffer_min * cam->dma_bytes_per_item), (unsigned) (dma_half_buffer * cam->dma_bytes_per_item),
+            (unsigned) (lines_per_half_buffer), (unsigned) (dma_buffer_size * cam->dma_bytes_per_item), (unsigned) image_size);
 
     cam->dma_buffer_size = dma_buffer_size * cam->dma_bytes_per_item;
     cam->dma_half_buffer_size = dma_half_buffer * cam->dma_bytes_per_item;
@@ -460,10 +484,10 @@ size_t IRAM_ATTR ll_cam_memcpy(cam_obj_t *cam, uint8_t *out, const uint8_t *in, 
     return r;
 }
 
-esp_err_t ll_cam_set_sample_mode(cam_obj_t *cam, pixformat_t pix_format, uint32_t xclk_freq_hz, uint8_t sensor_pid)
+esp_err_t ll_cam_set_sample_mode(cam_obj_t *cam, pixformat_t pix_format, uint32_t xclk_freq_hz, uint16_t sensor_pid)
 {
     if (pix_format == PIXFORMAT_GRAYSCALE) {
-        if (sensor_pid == OV3660_PID || sensor_pid == OV5640_PID || sensor_pid == NT99141_PID) {
+        if (sensor_pid == OV3660_PID || sensor_pid == OV5640_PID || sensor_pid == NT99141_PID || sensor_pid == SC031GS_PID) {
             if (xclk_freq_hz > 10000000) {
                 sampling_mode = SM_0A00_0B00;
                 dma_filter = ll_cam_dma_filter_yuyv_highspeed;
@@ -498,10 +522,6 @@ esp_err_t ll_cam_set_sample_mode(cam_obj_t *cam, pixformat_t pix_format, uint32_
             cam->in_bytes_per_pixel = 2;       // camera sends YU/YV
             cam->fb_bytes_per_pixel = 2;       // frame buffer stores YU/YV/RGB565
     } else if (pix_format == PIXFORMAT_JPEG) {
-        if (sensor_pid != OV2640_PID && sensor_pid != OV3660_PID && sensor_pid != OV5640_PID  && sensor_pid != NT99141_PID) {
-            ESP_LOGE(TAG, "JPEG format is not supported on this sensor");
-            return ESP_ERR_NOT_SUPPORTED;
-        }
         cam->in_bytes_per_pixel = 1;
         cam->fb_bytes_per_pixel = 1;
         dma_filter = ll_cam_dma_filter_jpeg;
